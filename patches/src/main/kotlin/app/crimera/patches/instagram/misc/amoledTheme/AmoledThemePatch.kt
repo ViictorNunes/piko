@@ -9,7 +9,6 @@ package app.crimera.patches.instagram.misc.amoledTheme
 import app.crimera.patches.instagram.utils.Constants.COMPATIBILITY_INSTAGRAM
 import app.morphe.patcher.patch.resourcePatch
 import app.morphe.util.findElementByAttributeValueOrThrow
-import java.io.File
 
 @Suppress("unused")
 val amoledThemePatch =
@@ -46,50 +45,5 @@ val amoledThemePatch =
                     colors.findElementByAttributeValueOrThrow("name", name).textContent = value
                 }
             }
-
-            // Thanks to the Instafel project for this improvement
-            val smaliFile = getProjectDir().walkTopDown()
-                .firstOrNull { it.isFile && it.name == "BasePrismColorsV2.smali" }
-
-            if (smaliFile == null) {
-                println("BasePrismColorsV2.smali not found")
-            } else if (patchGray1600(smaliFile)) {
-                println("GRAY_1600 patched -> 0xff000000L")
-            } else {
-                println("GRAY_1600 not patched")
-            }
         }
     }
-
-private fun getProjectDir(): File {
-    val path = System.getProperty("morphe.projectDir")
-        ?: error("Unable to resolve project directory for smali scan")
-    return File(path)
-}
-
-private fun patchGray1600(file: File): Boolean {
-    val lines = file.readLines().toMutableList()
-
-    for (i in lines.indices) {
-        val line = lines[i].trim()
-        if (!line.startsWith("sput-wide") || !line.contains("->GRAY_1600:J")) continue
-
-        for (j in i - 1 downTo maxOf(0, i - 20)) {
-            val prev = lines[j].trim()
-
-            if (prev.startsWith("const-wide")) {
-                val register = prev.substringAfter(' ').substringBefore(',').trim()
-                val indent = lines[j].takeWhile { it == ' ' || it == '\t' }
-                lines[j] = "${indent}const-wide $register, 0xff000000L"
-                file.writeText(lines.joinToString("\n"))
-                return true
-            }
-
-            if (prev.startsWith("sput-wide") || prev.startsWith(".method")) {
-                break
-            }
-        }
-    }
-
-    return false
-}
