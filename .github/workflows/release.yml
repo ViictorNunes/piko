@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - dev
 
 jobs:
   release:
@@ -37,11 +38,25 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Configurar Credenciais Globais do Gradle
+        run: |
+          mkdir -p ~/.gradle
+          echo "gpr.user=${{ github.actor }}" >> ~/.gradle/gradle.properties
+          echo "gpr.key=${{ secrets.GH_TOKEN }}" >> ~/.gradle/gradle.properties
+          echo "GPR_USER=${{ github.actor }}" >> ~/.gradle/gradle.properties
+          echo "GPR_KEY=${{ secrets.GH_TOKEN }}" >> ~/.gradle/gradle.properties
+
       - name: Release
         uses: cycjimmy/semantic-release-action@v4
         id: release
+        with:
+          extra_plugins: |
+            @semantic-release/git
+            @semantic-release/github
         env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GRADLE_OPTS: "-Dgpr.user=${{ github.actor }} -Dgpr.key=${{ secrets.GH_TOKEN }}"
           GIT_AUTHOR_NAME: semantic-release-bot
           GIT_AUTHOR_EMAIL: semantic-release-bot@martynus.net
           GIT_COMMITTER_NAME: semantic-release-bot
