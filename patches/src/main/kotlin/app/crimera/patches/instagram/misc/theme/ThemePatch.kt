@@ -7,10 +7,18 @@
 package app.crimera.patches.instagram.misc.theme
 
 import app.crimera.patches.instagram.utils.Constants.COMPATIBILITY_INSTAGRAM
+import app.morphe.patcher.Fingerprint
+import app.morphe.patcher.extensions.InstructionExtensions.instructions
+import app.morphe.patcher.extensions.InstructionExtensions.replaceInstruction
 import app.morphe.patcher.patch.ResourcePatchContext
+import app.morphe.patcher.patch.bytecodePatch
 import app.morphe.patcher.patch.resourcePatch
 import app.morphe.patcher.patch.booleanOption
 import app.morphe.util.findElementByAttributeValueOrThrow
+import com.android.tools.smali.dexlib2.Opcode
+import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
+import com.android.tools.smali.dexlib2.iface.reference.FieldReference
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import java.io.FileWriter
@@ -42,6 +50,54 @@ val themePatch =
         execute {
             forceWhiteOnMediaChrome()
             if (amoled == true) applyAmoledTheme() else applyMaterialYouTheme()
+        }
+    }
+
+// Thanks to instafel (https://github.com/mamiiblt/instafel) - GRAY_1600 is a
+// compiled constant in BasePrismColorsV2's <clinit>, not a color resource, so
+// the colors.xml overrides above don't reach it. It's the prism-black tone
+// newer Compose screens use, so without this patch they stay dark gray
+// instead of pure black in AMOLED mode.
+private const val PRISM_COLORS_V2_CLASS = "Lcom/instagram/compose/core/theme/BasePrismColorsV2;"
+private const val GRAY_1600_FIELD_NAME = "GRAY_1600"
+private const val PURE_BLACK_LITERAL = "0xff000000L"
+
+internal object BasePrismColorsV2ClinitFingerprint : Fingerprint(
+    custom = { method, classDef ->
+        classDef.type == PRISM_COLORS_V2_CLASS && method.name == "<clinit>"
+    },
+)
+
+internal val amoledPrismComposeGray1600Patch =
+    bytecodePatch(
+        name = "AMOLED prism Compose GRAY_1600",
+        default = true,
+    ) {
+        compatibleWith(COMPATIBILITY_INSTAGRAM)
+
+        execute {
+            BasePrismColorsV2ClinitFingerprint.method.apply {
+                val sputIndex = instructions.indexOfFirst { instruction ->
+                    instruction.opcode == Opcode.SPUT_WIDE &&
+                        (instruction as? ReferenceInstruction)?.reference
+                            ?.let { it as? FieldReference }
+                            ?.let { it.definingClass == PRISM_COLORS_V2_CLASS && it.name == GRAY_1600_FIELD_NAME } == true
+                }
+
+                if (sputIndex == -1) return@apply
+
+                for (index in sputIndex - 1 downTo 0) {
+                    val instruction = instructions[index]
+
+                    if (instruction.opcode == Opcode.CONST_WIDE) {
+                        val register = (instruction as OneRegisterInstruction).registerA
+                        replaceInstruction(index, "const-wide v$register, $PURE_BLACK_LITERAL")
+                        break
+                    }
+
+                    if (instruction.opcode == Opcode.SPUT_WIDE) break
+                }
+            }
         }
     }
 
