@@ -13,7 +13,6 @@ import app.morphe.patcher.patch.booleanOption
 import app.morphe.util.findElementByAttributeValueOrThrow
 import org.w3c.dom.Document
 import org.w3c.dom.Element
-import java.io.File
 import java.io.FileWriter
 import java.nio.file.Files
 
@@ -37,6 +36,8 @@ val themePatch =
                 "About-this-account) and full-screen media/Reels keep Instagram's own " +
                 "colours in both modes.",
         )
+
+        dependsOn(amoledPrismComposeGray1600Patch)
 
         execute {
             forceWhiteOnMediaChrome()
@@ -108,65 +109,11 @@ private fun ResourcePatchContext.applyAmoledTheme() {
         }
     }
 
-    patchPrismComposeGray1600()
-}
-
-// Thanks to instafel (https://github.com/mamiiblt/instafel)
-//
-// The two colors.xml overrides above cover the classic View-based surfaces, but
-// newer Compose screens read their dark prism-black tone from a compiled-in
-// constant (GRAY_1600) inside BasePrismColorsV2.smali instead of from a colour
-// resource, so it survives both remaps above untouched. This walks the decoded
-// project tree for that class and rewrites the constant feeding GRAY_1600 to
-// solid black. Guarded the same way as the rest of the file: any failure (class
-// not found, unexpected bytecode shape, read-only tree, etc.) is logged and
-// skipped rather than failing the build.
-//
-// Assumption: `get(path)` resolves against the root of the decoded/apktool
-// project (the same tree containing res/), so `get(".")` gives that root for
-// the walk. If this patcher's ResourcePatchContext exposes a different way to
-// reach the project root (or the smali tree isn't reachable from a resource
-// patch at all in this framework), swap the `projectDir` line for the correct
-// accessor.
-private fun ResourcePatchContext.patchPrismComposeGray1600() {
-    try {
-        val projectDir = get(".")
-        if (!projectDir.isDirectory) return
-
-        val file = projectDir.walkTopDown()
-            .firstOrNull { it.isFile && it.name == "BasePrismColorsV2.smali" }
-            ?: return
-
-        patchGray1600Constant(file)
-    } catch (_: Exception) {
-    }
-}
-
-private fun patchGray1600Constant(file: File): Boolean {
-    val lines = file.readLines().toMutableList()
-
-    for (index in lines.indices) {
-        val line = lines[index].trim()
-        if (!line.startsWith("sput-wide") || !line.contains("->GRAY_1600:J")) continue
-
-        for (previousIndex in index - 1 downTo maxOf(0, index - 20)) {
-            val previous = lines[previousIndex].trim()
-
-            if (previous.startsWith("const-wide")) {
-                val register = previous.substringAfter(' ').substringBefore(',').trim()
-                val indent = lines[previousIndex].takeWhile { it == ' ' || it == '\t' }
-                lines[previousIndex] = "${indent}const-wide $register, 0xff000000L"
-                file.writeText(lines.joinToString("\n"))
-                return true
-            }
-
-            if (previous.startsWith("sput-wide") || previous.startsWith(".method")) {
-                break
-            }
-        }
-    }
-
-    return false
+    // GRAY_1600 (the Compose prism-black constant read by newer screens instead
+    // of the colors.xml leaves above) is patched separately as a bytecode patch —
+    // see amoledPrismComposeGray1600Patch — since a resource patch's `get(path)`
+    // has no visibility into the smali/class tree. Wire that patch in via
+    // `dependsOn(amoledPrismComposeGray1600Patch)` on the `themePatch` above.
 }
 
 private fun ResourcePatchContext.applyMaterialYouTheme() {
