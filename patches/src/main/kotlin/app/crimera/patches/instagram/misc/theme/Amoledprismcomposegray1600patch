@@ -1,0 +1,83 @@
+/*
+ * Copyright (C) 2026 piko <https://github.com/crimera/piko>
+ *
+ * See the included NOTICE file for GPLv3 §7(b) terms that apply to this code.
+ *
+ * Thanks to instafel (https://github.com/mamiiblt/instafel) for identifying that
+ * Compose surfaces read their AMOLED prism-black tone from the GRAY_1600 constant
+ * inside BasePrismColorsV2's static initializer (<clinit>), rather than from a
+ * color resource - so the colors.xml overrides in the AMOLED theme patch never
+ * touch it.
+ *
+ * Their own patcher can just open BasePrismColorsV2.smali as a text file and
+ * rewrite the line in place; confirmed by diffing decompiled output that this
+ * doesn't work here; a Piko/Morphe resource patch's `get(path)` only has
+ * visibility into res/, not the smali/class tree; it silently finds nothing to
+ * walk. This does the equivalent edit as a real bytecode patch instead.
+ */
+package app.crimera.patches.instagram.misc.theme
+
+import app.crimera.patches.instagram.utils.Constants.COMPATIBILITY_INSTAGRAM
+import app.morphe.patcher.Fingerprint
+import app.morphe.patcher.extensions.InstructionExtensions.instructions
+import app.morphe.patcher.extensions.InstructionExtensions.replaceInstruction
+import app.morphe.patcher.patch.bytecodePatch
+import com.android.tools.smali.dexlib2.Opcode
+import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
+import com.android.tools.smali.dexlib2.iface.reference.FieldReference
+
+private const val PRISM_COLORS_V2_CLASS = "Lcom/instagram/compose/core/theme/BasePrismColorsV2;"
+private const val GRAY_1600_FIELD_NAME = "GRAY_1600"
+private const val PURE_BLACK_LITERAL = "0xff000000L"
+
+// No distinguishing string literal exists inside a <clinit>, so this matches
+// directly by class + method name instead of the `strings` shortcut used by
+// DisableAdsFingerprint. Confirm `custom` is the right constructor param name
+// for Fingerprint in this Morphe version - it's the standard revanced-patcher
+// name, but forks occasionally rename it.
+internal object BasePrismColorsV2ClinitFingerprint : Fingerprint(
+    custom = { method, classDef ->
+        classDef.type == PRISM_COLORS_V2_CLASS && method.name == "<clinit>"
+    },
+)
+
+@Suppress("unused")
+val amoledPrismComposeGray1600Patch =
+    bytecodePatch(
+        name = "AMOLED prism Compose GRAY_1600",
+        default = true,
+    ) {
+        compatibleWith(COMPATIBILITY_INSTAGRAM)
+
+        execute {
+            BasePrismColorsV2ClinitFingerprint.method.apply {
+                val sputIndex = instructions.indexOfFirst { instruction ->
+                    instruction.opcode == Opcode.SPUT_WIDE &&
+                        (instruction as? ReferenceInstruction)?.reference
+                            ?.let { it as? FieldReference }
+                            ?.let { it.definingClass == PRISM_COLORS_V2_CLASS && it.name == GRAY_1600_FIELD_NAME } == true
+                }
+
+                if (sputIndex == -1) return@apply
+
+                // Walk backwards to the const-wide feeding that sput-wide. A
+                // shl-long/2addr sits in between (packing the ARGB value into
+                // Compose's internal 64-bit color representation) and is left
+                // untouched - only the literal itself needs to change.
+                for (index in sputIndex - 1 downTo 0) {
+                    val instruction = instructions[index]
+
+                    if (instruction.opcode == Opcode.CONST_WIDE) {
+                        val register = (instruction as OneRegisterInstruction).registerA
+                        replaceInstruction(index, "const-wide v$register, $PURE_BLACK_LITERAL")
+                        break
+                    }
+
+                    // Ran into the previous field's own assignment without
+                    // finding a const-wide - bail rather than touch the wrong slot.
+                    if (instruction.opcode == Opcode.SPUT_WIDE) break
+                }
+            }
+        }
+    }
