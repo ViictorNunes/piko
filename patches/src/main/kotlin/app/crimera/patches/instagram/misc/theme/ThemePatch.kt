@@ -68,37 +68,42 @@ internal object BasePrismColorsV2ClinitFingerprint : Fingerprint(
     },
 )
 
+private fun patchGray1600(): Boolean {
+    BasePrismColorsV2ClinitFingerprint.method.apply {
+        val sputIndex = instructions.indexOfFirst { instruction ->
+            instruction.opcode == Opcode.SPUT_WIDE &&
+                (instruction as? ReferenceInstruction)?.reference
+                    ?.let { it as? FieldReference }
+                    ?.let { it.definingClass == PRISM_COLORS_V2_CLASS && it.name == GRAY_1600_FIELD_NAME } == true
+        }
+
+        if (sputIndex == -1) return false
+
+        for (index in sputIndex - 1 downTo 0) {
+            val instruction = instructions[index]
+
+            if (instruction.opcode == Opcode.CONST_WIDE) {
+                val register = (instruction as OneRegisterInstruction).registerA
+                replaceInstruction(index, "const-wide v$register, $PURE_BLACK_LITERAL")
+                return true
+            }
+
+            if (instruction.opcode == Opcode.SPUT_WIDE) break
+        }
+    }
+
+    return false
+}
+
 internal val amoledPrismComposeGray1600Patch =
     bytecodePatch(
         name = "AMOLED prism Compose GRAY_1600",
         default = true,
+        use = false,
     ) {
         compatibleWith(COMPATIBILITY_INSTAGRAM)
 
-        execute {
-            BasePrismColorsV2ClinitFingerprint.method.apply {
-                val sputIndex = instructions.indexOfFirst { instruction ->
-                    instruction.opcode == Opcode.SPUT_WIDE &&
-                        (instruction as? ReferenceInstruction)?.reference
-                            ?.let { it as? FieldReference }
-                            ?.let { it.definingClass == PRISM_COLORS_V2_CLASS && it.name == GRAY_1600_FIELD_NAME } == true
-                }
-
-                if (sputIndex == -1) return@apply
-
-                for (index in sputIndex - 1 downTo 0) {
-                    val instruction = instructions[index]
-
-                    if (instruction.opcode == Opcode.CONST_WIDE) {
-                        val register = (instruction as OneRegisterInstruction).registerA
-                        replaceInstruction(index, "const-wide v$register, $PURE_BLACK_LITERAL")
-                        break
-                    }
-
-                    if (instruction.opcode == Opcode.SPUT_WIDE) break
-                }
-            }
-        }
+        execute { patchGray1600() }
     }
 
 // On-media chrome — the feed post header (username / subtitle / follow / ⋯ menu),
@@ -164,12 +169,6 @@ private fun ResourcePatchContext.applyAmoledTheme() {
             colors.findElementByAttributeValueOrThrow("name", name).textContent = value
         }
     }
-
-    // GRAY_1600 (the Compose prism-black constant read by newer screens instead
-    // of the colors.xml leaves above) is patched separately as a bytecode patch —
-    // see amoledPrismComposeGray1600Patch — since a resource patch's `get(path)`
-    // has no visibility into the smali/class tree. Wire that patch in via
-    // `dependsOn(amoledPrismComposeGray1600Patch)` on the `themePatch` above.
 }
 
 private fun ResourcePatchContext.applyMaterialYouTheme() {
